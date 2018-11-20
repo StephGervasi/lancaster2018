@@ -1,0 +1,290 @@
+---
+title: "Blood Lead Levels In Philadelphia"
+author: "Joy Payton"
+date: "11/20/2018"
+output: 
+  html_document: 
+    highlight: haddock
+    theme: yeti
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+# Installing Packages
+
+You might have to install packages... certainly if you're new!  If you need to do this, run the code chunk below.
+
+```{r install, eval=FALSE}
+install.packages("tidyverse") # very important and opinionated super-package!
+install.packages("ggplot2")
+install.packages("ggthemeassist") # optional but helpful
+install.packages("ggthemes") # optional but helpful
+```
+
+# Load Packages We Need
+
+We begin by loading packages we need. I can add `echo=FALSE` if I want to suppress the R code being printed to my final document.
+
+```{r load-packages}
+library(dplyr)
+library(ggplot2)
+```
+
+# Get Data
+
+Here, I make sure that the data is loaded.  I have to make sure that the file path for the Philadelphia Census data is correct.  Note that sometimes the Philly data website hiccups.  Just try again if you get a warning.
+
+```{r get-data}
+lead_data <- read.csv("https://phl.carto.com/api/v2/sql?q=SELECT+*+FROM+child_blood_lead_levels_by_ct&filename=child_blood_lead_levels_by_ct&format=csv&skipfields=cartodb_id,the_geom,the_geom_webmercator")
+philadelphia_census_data <- read.csv("philly_census.csv")
+```
+
+Here, I'm going to add some insights from what I've read about the lead database on the Philly Open Data website and what I've been told about the census dataset.
+
+For example:
+
+* Where there were 1-5 children with high lead, the exact number is suppressed.
+* If there were 0 children or >6 children with high lead, the exact number is given.
+* The census data is a selection of the American Community Survey's estimates of Selected Economic Characteristics (2016 estimates), with more helpful variable names instead of the coded variable names provided by the US Census Bureau.
+
+# Clean the Data
+
+The lead data has some missing data, some columns we don't want, etc.  We need to clean this data. (Aside: the oft quoted statistic is that 80% of data analytics is cleaning and preparation!)
+
+## Make a Copy
+
+We can make changes directly in our `lead_data`, but what if we mess up and have to re-download it?  Better to make a copy to work with.
+
+```{r copy-data}
+lead_data_corrected <- lead_data
+```
+
+## Impute (Fill in Missing Data)
+
+Take the section of rows where the data was redacted and the number of kiddos with high lead is "NA", and turn those NA into a number.  We pick the number 3, since we know it could be 1, 2, 3, 4, or 5 kiddos.  A good guess is 3.  Note that this is fairly unsophisticated!
+
+```{r impute-data}
+lead_data_corrected$num_bll_5plus[which(is.na(lead_data_corrected$num_bll_5plus))]  <- 3
+```
+
+## Deal with Columns
+
+But now that we've imputed a value for those NA values, the `perc_5plus` variable is not really accurate any more.
+
+That means it is a good time to do some more radical cleaning of our data.
+
+`transmute()` (part of the "tidyverse") allows us to create a new dataset that keeps some columns and adds new ones.
+
+```{r reshape-data}
+lead_data_corrected <- lead_data_corrected %>%
+  transmute(census_tract, percent_high_lead = round((num_bll_5plus / num_screen) * 100, 1))
+
+head(lead_data_corrected)
+```
+
+
+# Combine Data
+
+What column is the "hinge" between our two data frames?
+
+Does it have the same variable name in both data frames, or is it different?
+
+Which tracts do we want?  Ones that appear in both?  In at least `lead_data`?  You want to explain here your rationale for joining the data and including / excluding data that exists in only one of the datasets.
+
+We're going to use merge to combine these.
+
+Use `?merge()` to get the information you need to complete the following:
+
+```{r merge-data}
+lead_ses <- merge(x=lead_data_corrected, 
+                  y=philadelphia_census_data, 
+                  by="census_tract")
+
+head(lead_ses)
+```
+
+
+# Visualize Data
+
+We want to visualize our data to understand it more.  I have a lot of opinions about data visualization, shaped in large part by Edward Tufte.  
+
+## Histogram 
+
+Let's make a histogram (frequency graph) for median income.  We'll use `ggplot2` to do this... a complex visualization package that has a daunting syntax **but** yields amazing results, as we'll see as we build up gradually more informative graphs.
+
+```{r histogram}
+ggplot(lead_ses, aes(median_household_income)) +
+  geom_histogram()
+```
+
+`ggplot2` allows you to gradually add layers of complexity to a plot using the "grammar of graphics".
+
+You start with the data source (in our case, `lead_ses`) and some "aesthetic" values -- what you're going to plot from that data.  Then you add a geometric representation (histogram, point, bar, box).  Then we can tweak things like axis titles and other explanatory elements.
+
+## Boxplot
+
+You have to give an X value, even though you're not going to have an X variable.
+
+```{r boxplot}
+ggplot(lead_ses, aes(x = 0, median_household_income)) +
+  geom_boxplot() +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+What about putting two variables into play?  If you have a geometric representation that requires an x and a y value, `ggplot` will assume that you're going to give it two variables in `aes`.  Unless you say otherwise, the first will be x, the second will be y.
+
+## Scatterplot
+
+Below, the code that will make a scatterplot (points) where x is pct_unemployed and y is percent_high_lead:
+
+```{r scatter-1}
+ggplot(lead_ses, aes(pct_unemployed, percent_high_lead)) +
+  geom_point()
+```
+
+Do you think there's a relationship?
+
+We can also try scatterplots of other relationships, like high lead as a function of mean household income, or uninsured children plotted against public transit use.
+
+```{r scatter-2}
+ggplot(lead_ses, aes(pct_commute_public_transit, percent_high_lead)) +
+  geom_point()
+
+ggplot(lead_ses, aes(pct_commute_public_transit, pct_child_uninsured)) +
+  geom_point()
+```
+
+Find anything interesting?
+
+## Adding Color
+
+Let's add in a third variable, using color!
+
+```{r plot-color}
+ggplot(lead_ses, aes(pct_commute_public_transit, percent_high_lead)) +
+  geom_point(aes(color = pct_families_below_poverty_line))
+```
+
+## Improving Labels
+
+Let's spruce this up and make our graph more attractive. 
+
+```{r color-scale}
+ggplot(lead_ses, aes(pct_commute_public_transit, percent_high_lead)) +
+  geom_point(aes(color = pct_families_below_poverty_line)) +
+  labs(title = "Commuting, Poverty, and Lead Exposure",
+       x = "Percent Who Commute to Work via Public Transit",
+       y = "Percent of Children With High Lead") +
+       scale_color_continuous("Percent of Families\nBelow the Poverty Line")
+```
+
+As you can see the syntax is complex.  You can add colors to the lines, axes, backgrounds, etc.  You can tell ggplot where you want your tick marks and where to put the plot legend.  You can customize so much of your plot, but it isn't super easy, syntax-wise.
+
+BUT!  If you have installed the package "ggThemeAssist", there is some good stuff you can use by highlighting some ggplot code and then going to the "Addins" menu up top and selecting "ggplot Theme Assistant".
+
+## ggthemeassist
+
+Let's try that now!  Take the code below, highlight it, and select ggThemeAssist.  Play with different ways to enhance / improve your plot!
+
+```{r}
+ggplot(lead_ses, aes(pct_commute_public_transit, percent_high_lead)) +
+  geom_point(aes(color = pct_families_below_poverty_line)) +
+  labs(title = "Commuting, Poverty, and\nChildhood Lead Exposure in Philadelphia",
+       x = "Commute to Work via Public Transit (%)",
+       y = "Children With High Lead (%)") +
+       scale_color_continuous("Below\nPoverty Line\n(%)") + 
+  theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    axis.title = element_text(colour = "dodgerblue4"), 
+    plot.title = element_text(colour = "dodgerblue4"), 
+    legend.text = element_text(size = 7), 
+    legend.title = element_text(size = 7), 
+    panel.background = element_rect(fill = "oldlace"), 
+    legend.key = element_rect(fill = "gray100"), 
+    legend.position = c(0.89, 0.75),
+    legend.background = element_rect(fill= alpha("oldlace", 0.5)))
+```
+
+
+## ggthemes
+
+`ggthemes` is another helpful package!
+
+Here I use ggthemes to use ready-made themes that emulate a certain style or publication, like so:
+
+```{r}
+library(ggthemes)
+
+ggplot(lead_ses, aes(median_household_income)) +
+  geom_histogram(color = "red", fill = "#FFCCCC") +
+  theme_economist() + 
+  theme(plot.margin=unit(c(1,1,1,1),"cm"))
+
+ggplot(lead_ses, aes(median_household_income)) +
+  geom_histogram() +
+  theme_fivethirtyeight() 
+```
+
+# Statistics
+
+So, you think you have something statistically interesting!  A real pattern.  Poorer areas have children with higher lead than more wealthy areas.  But is the trend you see statistically significant?
+
+Aside: I won't actually teach statistics here. But a great book (free, online, with a nice printable version) is the Handbook of Biological Statistics at <http://www.biostathandbook.com/>.  There's a fan of this book that created an R companion to it.  I can't testify to how good it is, but it might be helpful.  Check it out at <https://rcompanion.org/rcompanion/a_02.html>.
+
+## Statistics for a Linear Model
+
+You think you have a pretty good predictor of lead levels for a given census tract: the percent of families in that area who live below the poverty line.
+
+```{r}
+my_model <- lm(percent_high_lead ~ pct_families_below_poverty_line, lead_ses)
+summary(my_model)
+```
+
+Check out the R squared and the p values (Pr(>|t|)).  You may also want to try plotting these points and the suggested linear model to see if it looks good to you.
+
+```{r plot-model}
+ggplot(lead_ses, aes(pct_families_below_poverty_line, percent_high_lead)) +
+  geom_point() +
+  geom_abline(intercept = coef(my_model)[1], slope = coef(my_model)[2], color="darkred")
+```
+
+## Statistics for a t-test
+
+Don't want to do a predictive model, but rather, demonstrate 2-group difference in mean?  We can make groups like this:
+
+```{r t-test}
+high_poverty <- lead_ses %>% filter(pct_families_below_poverty_line >= 20)
+low_poverty <- lead_ses %>% filter(pct_families_below_poverty_line < 20)
+
+t.test(high_poverty$percent_high_lead, low_poverty$percent_high_lead)
+```
+
+Check out the t, p-value, and confidence interval.  How could you plot this?  Here's one way:
+
+```{r plot-t-test}
+ggplot(high_poverty) +
+  geom_density(data = high_poverty, aes(percent_high_lead), fill = "lightblue", alpha = 0.5) +
+  geom_vline(xintercept = mean(high_poverty$percent_high_lead, na.rm=TRUE), color = "skyblue") +
+  geom_density(data = low_poverty, aes(percent_high_lead), fill = "grey", alpha = 0.5) +
+  geom_vline(xintercept = mean(low_poverty$percent_high_lead, na.rm=TRUE), color = "grey48") 
+```
+
+So we find a statistically significant difference.  
+
+# Telling the Story
+
+To tell a compelling data story, we have to go beyond the statistics and do some much more error-prone hypothesizing about the whys behind our data.  One can imagine a lede like this (thanks to my high school intern Aaron Nevinski for work in this regard): 
+
+>"The history and geography of Philadelphia's mass transit closely follows the history and geography of Philadelphia housing.  Children like Ayana, a Fishtown five year old, and Tim, a seven year old living in West Philadelphia, both live and go to school in buildings that are more than 70 years old, and stand, conveniently, only a few hundred yards from Philadelphia's subway system.  These buildings have old pipes, old paint, and lack the detailed record-keeping and stringent control of materials that mark buildings erected today. That may be why we find mass transit use being linked to high lead levels in children, including Ayana and Tim."
+
+With R and RStudio, you can create R Markdown documents that weave words, code, and data visualization in order to create these kinds of documents.
+
+Only research, progressive data investigation, and new questions that start the cycle again will yield a credible data story that holds up under scrutiny.  The tools I've shown today help put  data investigation and creation of data products at the fingertips of citizen scientists.
+
+People like **you**.
